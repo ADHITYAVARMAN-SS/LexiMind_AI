@@ -1,5 +1,7 @@
-sentence-transformers
-numpy
-torch
 streamlit
+sentence-transformers
+torch
+transformers
+scikit-learn
 pandas
+numpy

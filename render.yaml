@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: leximind-ai
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: streamlit run app/app.py --server.port=$PORT --server.address=0.0.0.0
+    envVars:
+      - key: DB_PATH
+        value: /data/vocab.db
+      - key: PYTHONUNBUFFERED
+        value: "1"
+    disk:
+      name: leximind-data
+      mountPath: /data
+      sizeGB: 1

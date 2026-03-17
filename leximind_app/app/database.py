@@ -1,10 +1,14 @@
+import os
 import sqlite3
 import json
 import numpy as np
 from datetime import datetime, timedelta
 from sentence_transformers import SentenceTransformer
 
-DB_FILE = "vocab.db"
+# In production (Railway), DB_PATH env var points to the persistent volume
+# e.g. /data/vocab.db — falls back to local vocab.db for development
+_db_dir = os.environ.get("DB_PATH", "vocab.db")
+DB_FILE  = _db_dir if _db_dir.endswith(".db") else os.path.join(_db_dir, "vocab.db")
 
 # ---------------------------
 # IN-MEMORY VECTOR CACHE

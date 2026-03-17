@@ -4,6 +4,9 @@ import time
 import streamlit as st
 import pandas as pd
 
+import os
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 from database import (
     init_db,
     load_words_from_csv,

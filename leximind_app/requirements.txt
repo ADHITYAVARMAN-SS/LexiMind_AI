@@ -5,5 +5,3 @@ transformers
 scikit-learn
 pandas
 numpy
-
-torch --index-url https://download.pytorch.org/whl/cpu

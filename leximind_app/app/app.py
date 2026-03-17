@@ -18,6 +18,8 @@ from database import (
     update_all_time_stats,
     get_random_words,
     get_mistake_words,
+    search_words,
+    get_word_history,
     reset_database,
     get_daily_attempts,
     get_daily_accuracy,
@@ -102,6 +104,8 @@ _defaults = {
     "confirm_reset":    False,
     # Guard so update_all_time_stats fires only once per summary render
     "stats_saved":      False,
+    # Word lookup page — stores selected word_id for detail view
+    "lookup_word_id":   None,
 }
 
 for k, v in _defaults.items():
@@ -127,14 +131,15 @@ def calculate_points(correct, response_time, streak):
 
 
 def reset_session_stats():
-    st.session_state.current_streak  = 0
-    st.session_state.best_streak     = 0
-    st.session_state.session_score   = 0
-    st.session_state.session_results = []
+    st.session_state.current_streak    = 0
+    st.session_state.best_streak       = 0
+    st.session_state.session_score     = 0
+    st.session_state.session_results   = []
     st.session_state.session_attempted = 0
-    st.session_state.session_correct = 0
-    st.session_state.stats_saved     = False
-    st.session_state.feedback_state  = None
+    st.session_state.session_correct   = 0
+    st.session_state.stats_saved       = False
+    st.session_state.feedback_state    = None
+    st.session_state.current_question  = None   # prevent stale question flash
 
 
 
@@ -240,6 +245,11 @@ if st.session_state.page == "home":
             reset_session_stats()
             generate_question()
             st.rerun()
+
+    if st.button("🔍 Word Lookup"):
+        st.session_state.page          = "lookup"
+        st.session_state.lookup_word_id = None
+        st.rerun()
 
     if st.button("📊 View Analytics"):
         st.session_state.page = "analytics"
@@ -481,6 +491,101 @@ elif st.session_state.page == "summary":
         if st.button("🏠 Back to Home"):
             st.session_state.page = "home"
             st.rerun()
+
+
+
+# =====================================================
+# WORD LOOKUP PAGE
+# =====================================================
+
+elif st.session_state.page == "lookup":
+
+    st.title("🔍 Word Lookup")
+
+    # ── Detail view: user clicked a word from results ────────────────
+    if st.session_state.lookup_word_id is not None:
+        word_id = st.session_state.lookup_word_id
+
+        # Fetch word info
+        conn   = __import__("database").get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT word, meaning, difficulty FROM words WHERE id = ?", (word_id,))
+        row = cursor.fetchone()
+        conn.close()
+
+        if row:
+            word, meaning, difficulty = row
+            total, correct, wrong, avg_time, history, next_review, reps = get_word_history(word_id)
+            accuracy = round((correct / total) * 100) if total else 0
+
+            st.markdown(f"## {word}")
+            st.markdown(f"**Meaning:** {meaning}")
+            st.caption(difficulty_label(difficulty))
+
+            st.markdown("---")
+
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("📝 Attempts",  total)
+            c2.metric("✅ Correct",   correct)
+            c3.metric("❌ Wrong",     wrong)
+            c4.metric("🎯 Accuracy",  f"{accuracy}%")
+
+            c5, c6 = st.columns(2)
+            c5.metric("⏱️ Avg Time (s)",   avg_time)
+            c6.metric("📅 Next Review",    next_review)
+
+            if history:
+                st.markdown("---")
+                st.subheader("📋 Recent Attempts (last 10)")
+                df_hist = pd.DataFrame(history, columns=["correct", "response_time", "date"])
+                df_hist["Result"]   = df_hist["correct"].map({1: "✅ Correct", 0: "❌ Wrong"})
+                df_hist["Time (s)"] = df_hist["response_time"]
+                df_hist["Date"]     = df_hist["date"]
+                df_hist = df_hist.sort_values("correct", ascending=True)
+                st.dataframe(
+                    df_hist[["Date", "Result", "Time (s)"]],
+                    use_container_width=True,
+                    hide_index=True,
+                )
+            else:
+                st.info("No attempts recorded for this word yet.")
+
+        st.markdown("---")
+        if st.button("← Back to Search"):
+            st.session_state.lookup_word_id = None
+            st.rerun()
+
+    # ── Search view ──────────────────────────────────────────────────
+    else:
+        query = st.text_input("Search by word or meaning:", placeholder="e.g. abstract, to study carefully…")
+
+        if query.strip():
+            results = search_words(query)
+
+            if results:
+                st.markdown(f"**{len(results)} result{'s' if len(results) != 1 else ''} found**")
+                st.markdown("---")
+
+                for word_id, word, meaning, difficulty in results:
+                    col_word, col_diff, col_btn = st.columns([3, 2, 1])
+                    snippet = meaning[:80] + ("…" if len(meaning) > 80 else "")
+                    col_word.markdown(f"**{word}**")
+                    col_word.caption(snippet)
+                    col_diff.caption(difficulty_label(difficulty))
+                    with col_btn:
+                        if st.button("View", key=f"lookup_{word_id}"):
+                            st.session_state.lookup_word_id = word_id
+                            st.rerun()
+            else:
+                st.info("No words matched your search.")
+        else:
+            st.caption("Type a word or part of a meaning to search the full vocabulary.")
+
+    st.markdown("---")
+    if st.button("🏠 Back to Home"):
+        st.session_state.page           = "home"
+        st.session_state.lookup_word_id = None
+        st.rerun()
 
 
 # =====================================================

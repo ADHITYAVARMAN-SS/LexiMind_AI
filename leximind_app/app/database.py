@@ -196,17 +196,21 @@ def get_word_difficulty(word_id):
 # GET DUE WORDS
 # ---------------------------
 
+# Single source of truth for the due-words query —
+# used by both get_due_words() and get_home_page_data()
+_DUE_WORDS_SQL = """
+    SELECT w.id, w.word, w.meaning
+    FROM words w
+    LEFT JOIN review_schedule r ON w.id = r.word_id
+    WHERE r.next_review IS NULL OR r.next_review <= ?
+    ORDER BY w.difficulty DESC
+"""
+
 def get_due_words():
     conn   = get_connection()
     cursor = conn.cursor()
     today  = datetime.now().strftime("%Y-%m-%d")
-    cursor.execute("""
-        SELECT w.id, w.word, w.meaning
-        FROM words w
-        LEFT JOIN review_schedule r ON w.id = r.word_id
-        WHERE r.next_review IS NULL OR r.next_review <= ?
-        ORDER BY w.difficulty DESC
-    """, (today,))
+    cursor.execute(_DUE_WORDS_SQL, (today,))
     rows = cursor.fetchall()
     conn.close()
     return rows
@@ -270,14 +274,8 @@ def get_home_page_data():
     cursor.execute("SELECT COUNT(*) FROM words")
     total_vocab = cursor.fetchone()[0] or 0
 
-    # Due words (ordered hardest-first)
-    cursor.execute("""
-        SELECT w.id, w.word, w.meaning
-        FROM words w
-        LEFT JOIN review_schedule r ON w.id = r.word_id
-        WHERE r.next_review IS NULL OR r.next_review <= ?
-        ORDER BY w.difficulty DESC
-    """, (today,))
+    # Due words — reuses the canonical SQL constant (single source of truth)
+    cursor.execute(_DUE_WORDS_SQL, (today,))
     due_words = cursor.fetchall()
 
     conn.close()
@@ -452,6 +450,85 @@ def get_total_words():
     conn.close()
     return result
 
+
+
+
+# ---------------------------
+# WORD LOOKUP
+# ---------------------------
+
+def search_words(query):
+    """
+    Full-text search across word and meaning columns.
+    Returns list of (id, word, meaning, difficulty) ordered by relevance:
+      exact word match first, then word starts-with, then meaning contains.
+    """
+    conn   = get_connection()
+    cursor = conn.cursor()
+    q      = query.strip().lower()
+
+    cursor.execute("""
+        SELECT
+            w.id, w.word, w.meaning, w.difficulty,
+            CASE
+                WHEN LOWER(w.word) = ?               THEN 1
+                WHEN LOWER(w.word) LIKE ? || '%'     THEN 2
+                ELSE                                      3
+            END AS relevance
+        FROM words w
+        WHERE LOWER(w.word)    LIKE '%' || ? || '%'
+           OR LOWER(w.meaning) LIKE '%' || ? || '%'
+        ORDER BY relevance, w.word
+        LIMIT 50
+    """, (q, q, q, q))
+
+    rows = cursor.fetchall()
+    conn.close()
+    return rows   # (id, word, meaning, difficulty)
+
+
+def get_word_history(word_id):
+    """
+    Returns per-word attempt history for the lookup detail view:
+      total attempts, correct count, wrong count,
+      average response time, last 10 attempts in reverse-chronological order.
+    """
+    conn   = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT
+            COUNT(*),
+            SUM(CASE WHEN correct = 1 THEN 1 ELSE 0 END),
+            SUM(CASE WHEN correct = 0 THEN 1 ELSE 0 END),
+            ROUND(AVG(response_time), 2)
+        FROM attempts WHERE word_id = ?
+    """, (word_id,))
+    row        = cursor.fetchone()
+    total      = row[0] or 0
+    correct    = row[1] or 0
+    wrong      = row[2] or 0
+    avg_time   = row[3] or 0.0
+
+    cursor.execute("""
+        SELECT correct, response_time, DATE(timestamp)
+        FROM attempts
+        WHERE word_id = ?
+        ORDER BY timestamp DESC
+        LIMIT 10
+    """, (word_id,))
+    history = cursor.fetchall()   # list of (correct, response_time, date)
+
+    cursor.execute(
+        "SELECT next_review, repetitions FROM review_schedule WHERE word_id = ?",
+        (word_id,)
+    )
+    sched = cursor.fetchone()
+    next_review  = sched[0] if sched else "Not scheduled"
+    repetitions  = sched[1] if sched else 0
+
+    conn.close()
+    return total, correct, wrong, avg_time, history, next_review, repetitions
 
 def reset_database():
     conn   = get_connection()

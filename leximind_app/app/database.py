@@ -183,14 +183,6 @@ def update_difficulty(word_id, correct, response_time):
     conn.close()
 
 
-def get_word_difficulty(word_id):
-    conn   = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT difficulty FROM words WHERE id = ?", (word_id,))
-    row = cursor.fetchone()
-    conn.close()
-    return row[0] if row else 1.0
-
 
 # ---------------------------
 # GET DUE WORDS
@@ -440,36 +432,7 @@ def get_difficulty_distribution():
     }
 
 
-def get_hard_words(limit=5):
-    conn   = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT w.word,
-               SUM(CASE WHEN a.correct = 0 THEN 1 ELSE 0 END) AS wrong_count
-        FROM attempts a JOIN words w ON a.word_id = w.id
-        GROUP BY w.id ORDER BY wrong_count DESC LIMIT ?
-    """, (limit,))
-    rows = cursor.fetchall()
-    conn.close()
-    return rows
 
-
-def get_average_response_time():
-    conn   = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT AVG(response_time) FROM attempts")
-    result = cursor.fetchone()[0]
-    conn.close()
-    return round(result, 2) if result else 0
-
-
-def get_mastered_words_count():
-    conn   = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM review_schedule WHERE repetitions >= 3")
-    result = cursor.fetchone()[0]
-    conn.close()
-    return result
 
 
 def get_random_words(n=10):
@@ -509,16 +472,6 @@ def get_mistake_words():
     rows = cursor.fetchall()
     conn.close()
     return rows
-
-
-def get_total_words():
-    """Total number of words loaded in the vocabulary."""
-    conn   = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM words")
-    result = cursor.fetchone()[0]
-    conn.close()
-    return result
 
 
 

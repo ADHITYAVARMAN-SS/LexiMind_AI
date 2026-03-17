@@ -13,7 +13,6 @@ from database import (
     update_difficulty,
     get_home_page_data,
     get_analytics_page_data,
-    get_all_time_stats,
     update_all_time_stats,
     get_random_words,
     get_mistake_words,

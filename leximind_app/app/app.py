@@ -11,22 +11,16 @@ from database import (
     get_due_words,
     update_schedule,
     update_difficulty,
-    get_word_difficulty,
     get_home_page_data,
-    get_home_stats,
+    get_analytics_page_data,
     get_all_time_stats,
     update_all_time_stats,
     get_random_words,
     get_mistake_words,
+    get_word_by_id,
     search_words,
     get_word_history,
     reset_database,
-    get_daily_attempts,
-    get_daily_accuracy,
-    get_difficulty_distribution,
-    get_hard_words,
-    get_average_response_time,
-    get_mastered_words_count,
     get_semantic_distractors,
     generate_and_store_embeddings,
 )
@@ -149,7 +143,7 @@ def generate_question():
         st.session_state.page             = "summary"
         return
 
-    word_id, word, meaning = st.session_state.question_pool.pop()
+    word_id, word, meaning, difficulty = st.session_state.question_pool.pop()
 
     wrong_options = get_semantic_distractors(word_id, limit=3)
     if len(wrong_options) < 3:
@@ -168,7 +162,7 @@ def generate_question():
         "word":       word,
         "correct":    meaning,
         "options":    options,
-        "difficulty": get_word_difficulty(word_id),
+        "difficulty": difficulty,   # already in pool tuple — no extra DB call
     }
     st.session_state.start_time = time.time()
 
@@ -506,12 +500,8 @@ elif st.session_state.page == "lookup":
     if st.session_state.lookup_word_id is not None:
         word_id = st.session_state.lookup_word_id
 
-        # Fetch word info
-        conn   = __import__("database").get_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT word, meaning, difficulty FROM words WHERE id = ?", (word_id,))
-        row = cursor.fetchone()
-        conn.close()
+        # Fetch word info via proper DB function
+        row = get_word_by_id(word_id)
 
         if row:
             word, meaning, difficulty = row
@@ -596,11 +586,13 @@ elif st.session_state.page == "analytics":
 
     st.title("📊 Learning Analytics Dashboard")
 
-    total_attempts, total_correct, total_wrong = get_home_stats()
-    mastered  = get_mastered_words_count()
-    avg_time  = get_average_response_time()
-    accuracy  = round((total_correct / total_attempts) * 100, 2) if total_attempts else 0
-    all_time_streak, all_time_score = get_all_time_stats()
+    (
+        total_attempts, total_correct, accuracy,
+        mastered, avg_time,
+        all_time_streak, all_time_score,
+        daily_attempts, daily_accuracy,
+        difficulty_dist, hard_words,
+    ) = get_analytics_page_data()
 
     # Top metrics — two rows of 3
     c1, c2, c3 = st.columns(3)
@@ -617,9 +609,8 @@ elif st.session_state.page == "analytics":
 
     # ── Chart 1: Daily attempt count ────────────────────────────────
     st.subheader("📈 Daily Activity")
-    daily_data = get_daily_attempts()
-    if daily_data:
-        df_daily = pd.DataFrame(daily_data, columns=["Date", "Attempts"])
+    if daily_attempts:
+        df_daily = pd.DataFrame(daily_attempts, columns=["Date", "Attempts"])
         df_daily["Date"] = pd.to_datetime(df_daily["Date"])
         st.line_chart(df_daily.set_index("Date"))
     else:
@@ -627,11 +618,10 @@ elif st.session_state.page == "analytics":
 
     st.markdown("---")
 
-    # ── Chart 2: Accuracy over time (new) ───────────────────────────
+    # ── Chart 2: Accuracy over time ──────────────────────────────────
     st.subheader("🎯 Accuracy Over Time")
-    acc_data = get_daily_accuracy()
-    if acc_data:
-        df_acc = pd.DataFrame(acc_data, columns=["Date", "Accuracy (%)"])
+    if daily_accuracy:
+        df_acc = pd.DataFrame(daily_accuracy, columns=["Date", "Accuracy (%)"])
         df_acc["Date"] = pd.to_datetime(df_acc["Date"])
         st.line_chart(df_acc.set_index("Date"))
     else:
@@ -639,18 +629,16 @@ elif st.session_state.page == "analytics":
 
     st.markdown("---")
 
-    # ── Chart 3: Difficulty distribution (new) ──────────────────────
+    # ── Chart 3: Difficulty distribution ────────────────────────────
     st.subheader("📊 Vocabulary Difficulty Distribution")
-    dist = get_difficulty_distribution()
-    total_words = sum(dist.values())
+    total_words = sum(difficulty_dist.values())
     if total_words > 0:
         df_dist = pd.DataFrame({
-            "Difficulty": list(dist.keys()),
-            "Words":      list(dist.values()),
+            "Difficulty": list(difficulty_dist.keys()),
+            "Words":      list(difficulty_dist.values()),
         })
         st.bar_chart(df_dist.set_index("Difficulty"))
-        # Inline summary text
-        for label, count in dist.items():
+        for label, count in difficulty_dist.items():
             pct = round(count / total_words * 100)
             st.caption(f"{label}: {count} words ({pct}%)")
     else:
@@ -660,7 +648,6 @@ elif st.session_state.page == "analytics":
 
     # ── Hardest words ────────────────────────────────────────────────
     st.subheader("🔥 Hardest Words")
-    hard_words = get_hard_words()
     if hard_words:
         for word, wrong_count in hard_words:
             st.write(f"• **{word}** — {wrong_count} mistakes")

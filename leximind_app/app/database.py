@@ -199,7 +199,7 @@ def get_word_difficulty(word_id):
 # Single source of truth for the due-words query —
 # used by both get_due_words() and get_home_page_data()
 _DUE_WORDS_SQL = """
-    SELECT w.id, w.word, w.meaning
+    SELECT w.id, w.word, w.meaning, w.difficulty
     FROM words w
     LEFT JOIN review_schedule r ON w.id = r.word_id
     WHERE r.next_review IS NULL OR r.next_review <= ?
@@ -220,25 +220,6 @@ def get_due_words():
 # ---------------------------
 # HOME STATS  (single round-trip)
 # ---------------------------
-
-def get_home_stats():
-    """Returns (total_attempts, total_correct, total_wrong)."""
-    conn   = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT
-            COUNT(*),
-            SUM(CASE WHEN correct = 1 THEN 1 ELSE 0 END),
-            SUM(CASE WHEN correct = 0 THEN 1 ELSE 0 END)
-        FROM attempts
-    """)
-    row = cursor.fetchone()
-    conn.close()
-    total   = row[0] or 0
-    correct = row[1] or 0
-    wrong   = row[2] or 0
-    return total, correct, wrong
-
 
 def get_home_page_data():
     """
@@ -285,6 +266,95 @@ def get_home_page_data():
         total_vocab, due_words,
     )
 
+
+
+def get_analytics_page_data():
+    """
+    Returns all analytics page data in a single DB connection:
+      total_attempts, total_correct, accuracy,
+      mastered, avg_time,
+      all_time_streak, all_time_score,
+      daily_attempts, daily_accuracy,
+      difficulty_dist, hard_words
+    """
+    conn   = get_connection()
+    cursor = conn.cursor()
+
+    # Attempt totals
+    cursor.execute("""
+        SELECT COUNT(*),
+               SUM(CASE WHEN correct = 1 THEN 1 ELSE 0 END)
+        FROM attempts
+    """)
+    row            = cursor.fetchone()
+    total_attempts = row[0] or 0
+    total_correct  = row[1] or 0
+    accuracy       = round((total_correct / total_attempts) * 100, 2) if total_attempts else 0
+
+    # Mastered words
+    cursor.execute("SELECT COUNT(*) FROM review_schedule WHERE repetitions >= 3")
+    mastered = cursor.fetchone()[0] or 0
+
+    # Avg response time
+    cursor.execute("SELECT ROUND(AVG(response_time), 2) FROM attempts")
+    avg_time = cursor.fetchone()[0] or 0
+
+    # All-time records
+    cursor.execute("SELECT best_streak, best_score FROM stats WHERE id = 1")
+    row             = cursor.fetchone()
+    all_time_streak = row[0] if row else 0
+    all_time_score  = row[1] if row else 0
+
+    # Daily attempt counts
+    cursor.execute("""
+        SELECT DATE(timestamp), COUNT(*)
+        FROM attempts GROUP BY DATE(timestamp) ORDER BY DATE(timestamp)
+    """)
+    daily_attempts = cursor.fetchall()
+
+    # Daily accuracy
+    cursor.execute("""
+        SELECT DATE(timestamp),
+               ROUND(100.0 * SUM(correct) / COUNT(*), 1)
+        FROM attempts
+        GROUP BY DATE(timestamp) ORDER BY DATE(timestamp)
+    """)
+    daily_accuracy = cursor.fetchall()
+
+    # Difficulty distribution
+    cursor.execute("""
+        SELECT
+            SUM(CASE WHEN difficulty <  0.6 THEN 1 ELSE 0 END),
+            SUM(CASE WHEN difficulty >= 0.6 AND difficulty < 1.4 THEN 1 ELSE 0 END),
+            SUM(CASE WHEN difficulty >= 1.4 AND difficulty < 2.2 THEN 1 ELSE 0 END),
+            SUM(CASE WHEN difficulty >= 2.2 THEN 1 ELSE 0 END)
+        FROM words
+    """)
+    d = cursor.fetchone()
+    difficulty_dist = {
+        "🟢 Easy":      d[0] or 0,
+        "🟡 Medium":    d[1] or 0,
+        "🟠 Hard":      d[2] or 0,
+        "🔴 Very Hard": d[3] or 0,
+    }
+
+    # Hard words (top 5)
+    cursor.execute("""
+        SELECT w.word,
+               SUM(CASE WHEN a.correct = 0 THEN 1 ELSE 0 END) AS wrong_count
+        FROM attempts a JOIN words w ON a.word_id = w.id
+        GROUP BY w.id ORDER BY wrong_count DESC LIMIT 5
+    """)
+    hard_words = cursor.fetchall()
+
+    conn.close()
+    return (
+        total_attempts, total_correct, accuracy,
+        mastered, avg_time,
+        all_time_streak, all_time_score,
+        daily_attempts, daily_accuracy,
+        difficulty_dist, hard_words,
+    )
 
 # ---------------------------
 # ALL-TIME RECORDS
@@ -406,7 +476,7 @@ def get_random_words(n=10):
     conn   = get_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT id, word, meaning FROM words ORDER BY RANDOM() LIMIT ?", (n,)
+        "SELECT id, word, meaning, difficulty FROM words ORDER BY RANDOM() LIMIT ?", (n,)
     )
     rows = cursor.fetchall()
     conn.close()
@@ -423,7 +493,7 @@ def get_mistake_words():
     conn   = get_connection()
     cursor = conn.cursor()
     cursor.execute("""
-        SELECT w.id, w.word, w.meaning
+        SELECT w.id, w.word, w.meaning, w.difficulty
         FROM words w
         JOIN (
             SELECT
@@ -456,6 +526,18 @@ def get_total_words():
 # ---------------------------
 # WORD LOOKUP
 # ---------------------------
+
+
+def get_word_by_id(word_id):
+    """Returns (word, meaning, difficulty) for the lookup detail view."""
+    conn   = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT word, meaning, difficulty FROM words WHERE id = ?", (word_id,)
+    )
+    row = cursor.fetchone()
+    conn.close()
+    return row  # (word, meaning, difficulty) or None
 
 def search_words(query):
     """

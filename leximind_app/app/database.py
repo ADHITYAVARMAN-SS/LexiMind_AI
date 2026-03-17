@@ -550,18 +550,20 @@ def search_words(query):
     q      = query.strip().lower()
 
     cursor.execute("""
-        SELECT
-            w.id, w.word, w.meaning, w.difficulty,
-            CASE
-                WHEN LOWER(w.word) = ?               THEN 1
-                WHEN LOWER(w.word) LIKE ? || '%'     THEN 2
-                ELSE                                      3
-            END AS relevance
-        FROM words w
-        WHERE LOWER(w.word)    LIKE '%' || ? || '%'
-           OR LOWER(w.meaning) LIKE '%' || ? || '%'
-        ORDER BY relevance, w.word
-        LIMIT 50
+        SELECT id, word, meaning, difficulty FROM (
+            SELECT
+                w.id, w.word, w.meaning, w.difficulty,
+                CASE
+                    WHEN LOWER(w.word) = ?               THEN 1
+                    WHEN LOWER(w.word) LIKE ? || '%'     THEN 2
+                    ELSE                                      3
+                END AS relevance
+            FROM words w
+            WHERE LOWER(w.word)    LIKE '%' || ? || '%'
+               OR LOWER(w.meaning) LIKE '%' || ? || '%'
+            ORDER BY relevance, w.word
+            LIMIT 50
+        )
     """, (q, q, q, q))
 
     rows = cursor.fetchall()

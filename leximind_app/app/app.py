@@ -7,18 +7,17 @@ import pandas as pd
 from database import (
     init_db,
     load_words_from_csv,
-    get_connection,
     record_attempt,
     get_due_words,
     update_schedule,
     update_difficulty,
     get_word_difficulty,
+    get_home_page_data,
     get_home_stats,
     get_all_time_stats,
     update_all_time_stats,
     get_random_words,
     get_mistake_words,
-    get_total_words,
     reset_database,
     get_daily_attempts,
     get_daily_accuracy,
@@ -177,13 +176,14 @@ if st.session_state.page == "home":
 
     st.title("🚀 LexiMind AI — Adaptive Vocabulary System")
 
-    total_attempts, total_correct, total_wrong = get_home_stats()
-    accuracy = round((total_correct / total_attempts) * 100, 2) if total_attempts else 0
+    (
+        total_attempts, total_correct, total_wrong,
+        all_time_streak, all_time_score,
+        total_vocab, due_words,
+    ) = get_home_page_data()
 
-    all_time_streak, all_time_score = get_all_time_stats()
-    total_vocab = get_total_words()
-    due_words   = get_due_words()   # fetched once, reused for the button below
-    due_count   = len(due_words)
+    accuracy  = round((total_correct / total_attempts) * 100, 2) if total_attempts else 0
+    due_count = len(due_words)
 
     # --- All-time records row ---
     r1, r2 = st.columns(2)

@@ -236,6 +236,58 @@ def get_home_stats():
     return total, correct, wrong
 
 
+def get_home_page_data():
+    """
+    Returns all home page data in a single DB connection:
+      total_attempts, total_correct, total_wrong,
+      all_time_streak, all_time_score,
+      total_vocab, due_words
+    """
+    conn   = get_connection()
+    cursor = conn.cursor()
+    today  = datetime.now().strftime("%Y-%m-%d")
+
+    # Attempt counts
+    cursor.execute("""
+        SELECT
+            COUNT(*),
+            SUM(CASE WHEN correct = 1 THEN 1 ELSE 0 END),
+            SUM(CASE WHEN correct = 0 THEN 1 ELSE 0 END)
+        FROM attempts
+    """)
+    row             = cursor.fetchone()
+    total_attempts  = row[0] or 0
+    total_correct   = row[1] or 0
+    total_wrong     = row[2] or 0
+
+    # All-time records
+    cursor.execute("SELECT best_streak, best_score FROM stats WHERE id = 1")
+    row             = cursor.fetchone()
+    all_time_streak = row[0] if row else 0
+    all_time_score  = row[1] if row else 0
+
+    # Total vocabulary size
+    cursor.execute("SELECT COUNT(*) FROM words")
+    total_vocab = cursor.fetchone()[0] or 0
+
+    # Due words (ordered hardest-first)
+    cursor.execute("""
+        SELECT w.id, w.word, w.meaning
+        FROM words w
+        LEFT JOIN review_schedule r ON w.id = r.word_id
+        WHERE r.next_review IS NULL OR r.next_review <= ?
+        ORDER BY w.difficulty DESC
+    """, (today,))
+    due_words = cursor.fetchall()
+
+    conn.close()
+    return (
+        total_attempts, total_correct, total_wrong,
+        all_time_streak, all_time_score,
+        total_vocab, due_words,
+    )
+
+
 # ---------------------------
 # ALL-TIME RECORDS
 # ---------------------------
@@ -352,31 +404,6 @@ def get_mastered_words_count():
     return result
 
 
-# Legacy single-stat helpers kept for backward compatibility
-def get_total_correct():
-    conn   = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM attempts WHERE correct = 1")
-    result = cursor.fetchone()[0]
-    conn.close()
-    return result
-
-def get_total_wrong():
-    conn   = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM attempts WHERE correct = 0")
-    result = cursor.fetchone()[0]
-    conn.close()
-    return result
-
-def get_total_attempts():
-    conn   = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM attempts")
-    result = cursor.fetchone()[0]
-    conn.close()
-    return result
-
 def get_random_words(n=10):
     conn   = get_connection()
     cursor = conn.cursor()
@@ -390,14 +417,26 @@ def get_random_words(n=10):
 
 
 def get_mistake_words():
-    """Words the user has answered incorrectly at least once."""
+    """
+    Words the user is still net-struggling with:
+    wrong attempts strictly outnumber correct attempts.
+    Words you've since mastered are excluded automatically.
+    """
     conn   = get_connection()
     cursor = conn.cursor()
     cursor.execute("""
         SELECT w.id, w.word, w.meaning
-        FROM attempts a JOIN words w ON a.word_id = w.id
-        WHERE a.correct = 0
-        GROUP BY w.id
+        FROM words w
+        JOIN (
+            SELECT
+                word_id,
+                SUM(CASE WHEN correct = 0 THEN 1 ELSE 0 END) AS wrong_count,
+                SUM(CASE WHEN correct = 1 THEN 1 ELSE 0 END) AS correct_count
+            FROM attempts
+            GROUP BY word_id
+        ) stats ON w.id = stats.word_id
+        WHERE stats.wrong_count > stats.correct_count
+        ORDER BY (stats.wrong_count - stats.correct_count) DESC
     """)
     rows = cursor.fetchall()
     conn.close()
